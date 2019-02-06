@@ -441,6 +441,22 @@ void			ft_error_unexpected(t_node *list)
 		ft_putstr_fd(": syntax error: unexpected end of file\n", 2);
 }
 
+void			ft_ast_free(t_node *ast)
+{
+	if (ast)
+	{
+		if (ast->left)
+			ft_ast_free(ast->left);
+		if (ast->right)
+			ft_ast_free(ast->right);
+		if (ast->redir)
+			ft_ast_free(ast->redir);
+		if (ast->data)
+			free(ast->data);
+		free(ast);
+	}
+}
+
 t_node			*ft_build_ast(t_node *list)
 {
 	t_node		*begin;
@@ -456,6 +472,8 @@ t_node			*ft_build_ast(t_node *list)
 		{
 			if (ret == 0)
 				ft_error_unexpected(list);
+			ft_ast_free(begin);
+			ft_ast_free(list);
 			return (NULL);
 		}
 	}
