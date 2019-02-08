@@ -207,28 +207,13 @@ void			ft_ast_freeone(t_node **list)
 
 int				ft_ast_newline(t_node **begin, t_node **current, t_node **list)
 {
-	t_node		*tmp;
-
-	if (!ft_ast_isbreakline(*current))
+	if (ft_ast_iscommand(*current))
 	{
-		tmp = *current;
-		while (tmp && tmp->token != LPAR && tmp->token != LBRACE)
-			tmp = tmp->parent;
-		if (tmp)
-		{
-			if ((tmp = tmp->right) && !ft_ast_isseparator(*current))
-			{
-				(*list)->token = SEMI;
-				ft_ast_separator(begin, current, list);
-			}
-			else
-				ft_ast_freeone(list);
-			return (ft_ast_continue_list(list));
-		}
+		(*list)->token = SEMI;
+		(*list)->data[0] = ';';
+		return (ft_ast_separator(begin, current, list));
 	}
 	ft_ast_freeone(list);
-	if (ft_ast_isbreakline(*current))
-		return (ft_ast_continue_list(list));
 	return (1);
 }
 
@@ -348,7 +333,8 @@ int				ft_ast_readheredoc(t_node *heredoc)
 			return (-1);
 		if (ret == 0)
 		{
-			ft_putstr_fd("here-document delimited by end-of-file\n", 2);
+			ft_putstr_fd("42sh: Warning : here-document delimited by "
+				"end-of-file\n", 2);
 			return (1);
 		}
 		if (strncmp(input, heredoc->right->data, ft_strlen(input) - 1))
@@ -457,6 +443,17 @@ void			ft_ast_free(t_node *ast)
 	}
 }
 
+int				ft_ast_isincompound(t_node *current)
+{
+	while (current)
+	{
+		if (current->token == LPAR || current->token == LBRACE)
+			return (1);
+		current = current->parent;
+	}
+	return (0);
+}
+
 t_node			*ft_build_ast(t_node *list)
 {
 	t_node		*begin;
@@ -468,6 +465,9 @@ t_node			*ft_build_ast(t_node *list)
 	while (list)
 	{
 		ret = g_asttab[list->token](&begin, &current, &list);
+		if (ret == 1 && !list && (ft_ast_isbreakline(current)
+			|| ft_ast_isincompound(current)))
+			ret = ft_ast_continue_list(&list);
 		if (ret != 1)
 		{
 			if (ret == 0)
