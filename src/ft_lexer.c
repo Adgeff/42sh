@@ -6,7 +6,7 @@
 /*   By: geargenc <geargenc@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2019/01/24 01:47:25 by geargenc          #+#    #+#             */
-/*   Updated: 2019/02/01 06:45:56 by geargenc         ###   ########.fr       */
+/*   Updated: 2019/03/01 16:32:39 by geargenc         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -327,7 +327,7 @@ int				ft_lex_ionumber(char **input, size_t *index,
 	size_t		i;
 
 	if (((*input)[*index] == '>' || (*input)[*index] == '<')
-		&& (*current)->token == WORD)
+		&& (*current)->token == WORD && (*current)->len <= 10)
 	{
 		i = (*current)->start;
 		while (i < (*current)->len)
@@ -336,6 +336,9 @@ int				ft_lex_ionumber(char **input, size_t *index,
 				return (1);
 			i++;
 		}
+		if ((*current)->len == 10 && ft_strncmp(*input + (*current)->start,
+			"2147483647", 10) > 0)
+			return (1);
 		(*current)->token = IO_NUMBER;
 	}
 	return (1);
@@ -418,6 +421,22 @@ int				ft_lex_newword(char **input, size_t *index, t_toklist **current)
 	return (0);
 }
 
+void			ft_print_toklist(char *input, t_toklist *list)
+{
+	while (list)
+	{
+		ft_putendl(g_tokstr[list->token]);
+		ft_putnbr(list->start);
+		ft_putchar('\n');
+		ft_putnbr(list->len);
+		ft_putchar('\n');
+		write(1, input + list->start, list->len);
+		ft_putchar('\n');
+		ft_putstr("----------------------------------------\n");
+		list = list->next;
+	}
+}
+
 t_toklist		*ft_lexer(char **input)
 {
 	size_t		index;
@@ -441,21 +460,6 @@ t_toklist		*ft_lexer(char **input)
 	}
 	if (current->token == NONE)
 		free(current);
+	ft_print_toklist(*input, begin);
 	return (begin);
-}
-
-void			ft_print_toklist(char *input, t_toklist *list)
-{
-	while (list)
-	{
-		ft_putendl(g_tokstr[list->token]);
-		ft_putnbr(list->start);
-		ft_putchar('\n');
-		ft_putnbr(list->len);
-		ft_putchar('\n');
-		write(1, input + list->start, list->len);
-		ft_putchar('\n');
-		ft_putstr("----------------------------------------\n");
-		list = list->next;
-	}
 }

@@ -6,7 +6,7 @@
 /*   By: geargenc <geargenc@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2019/01/24 01:51:22 by geargenc          #+#    #+#             */
-/*   Updated: 2019/02/03 13:02:24 by geargenc         ###   ########.fr       */
+/*   Updated: 2019/03/14 17:34:28 by geargenc         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -45,33 +45,7 @@ char					*g_tokstr[] =
 	"CLOBBER",
 	"LBRACE",
 	"RBRACE",
-	"COMMAND",
-	"complete_command",
-	"and_or",
-	"pipeline",
-	"pipe_sequence",
-	"command",
-	"compound_command",
-	"subshell",
-	"compound_list",
-	"term",
-	"brace_group",
-	"simple_command",
-	"cmd_name",
-	"cmd_word",
-	"cmd_prefix",
-	"cmd_suffix",
-	"redirect_list",
-	"io_redirect",
-	"io_file",
-	"filename",
-	"io_here",
-	"here_end",
-	"io_close",
-	"newline_list",
-	"linebreak",
-	"separator_op",
-	"separator"
+	"COMMAND"
 };
 
 t_toktab				g_toktab[] =
@@ -120,13 +94,13 @@ t_tokcond				g_tokcond[] =
 int						(*g_asttab[])(t_node **begin, t_node **current,
 						t_node **list) =
 {
-	&ft_badtoken,
+	&ft_ast_badtoken,
 	&ft_ast_word,
-	&ft_badtoken,
-	&ft_badtoken,
+	&ft_ast_badtoken,
+	&ft_ast_badtoken,
 	&ft_ast_newline,
 	&ft_ast_io_number,
-	&ft_badtoken,
+	&ft_ast_badtoken,
 	&ft_ast_pipe,
 	&ft_ast_separator,
 	&ft_ast_separator,
@@ -147,7 +121,39 @@ int						(*g_asttab[])(t_node **begin, t_node **current,
 	&ft_ast_redir,
 	&ft_ast_lbrace,
 	&ft_ast_rbrace,
-	&ft_badtoken
+	&ft_ast_badtoken
+};
+
+int						(*g_exetab[])(t_node *current, t_shell *shell) =
+{
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_badtoken,
+	ft_exe_pipe,
+	ft_exe_and,
+	ft_exe_semi,
+	ft_exe_great,
+	ft_exe_less,
+	ft_exe_badtoken,
+	ft_exe_rpar,
+	ft_exe_and_if,
+	ft_exe_or_if,
+	ft_exe_dless,
+	ft_exe_dgreat,
+	ft_exe_lessand,
+	ft_exe_lessanddash,
+	ft_exe_greatand,
+	ft_exe_greatanddash,
+	ft_exe_lessgreat,
+	ft_exe_dless,
+	ft_exe_great,
+	ft_exe_badtoken,
+	ft_exe_rbrace,
+	ft_exe_command
 };
 
 #endif

@@ -6,7 +6,7 @@
 /*   By: geargenc <geargenc@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2018/12/12 21:10:16 by geargenc          #+#    #+#             */
-/*   Updated: 2019/02/03 13:01:55 by geargenc         ###   ########.fr       */
+/*   Updated: 2019/03/14 17:35:07 by geargenc         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -14,6 +14,7 @@
 
 # define FT_42SH_H
 
+# include <sys/types.h>
 # include <unistd.h>
 # include <sys/wait.h>
 # include <stdio.h>
@@ -21,6 +22,8 @@
 # include <fcntl.h>
 # include <sys/ioctl.h>
 # include <signal.h>
+# include <termios.h>
+# include <sys/stat.h>
 
 # include "../libft/libft.h"
 
@@ -53,34 +56,7 @@ typedef enum			e_tok
 	CLOBBER,
 	LBRACE,
 	RBRACE,
-	COMMAND,
-	complete_command,
-	list,
-	and_or,
-	pipeline,
-	pipe_sequence,
-	command,
-	compound_command,
-	subshell,
-	compound_list,
-	term,
-	brace_group,
-	simple_command,
-	cmd_name,
-	cmd_word,
-	cmd_prefix,
-	cmd_suffix,
-	redirect_list,
-	io_redirect,
-	io_file,
-	filename,
-	io_here,
-	here_end,
-	io_close,
-	newline_list,
-	linebreak,
-	separator_op,
-	separator
+	COMMAND
 }						t_tok;
 
 typedef struct			s_toktab
@@ -158,7 +134,7 @@ int						ft_ast_newline(t_node **begin, t_node **current,
 						t_node **list);
 int						ft_ast_io_number(t_node **begin, t_node **current,
 						t_node **list);
-int						ft_badtoken(t_node **begin, t_node **current,
+int						ft_ast_badtoken(t_node **begin, t_node **current,
 						t_node **list);
 int						ft_ast_pipe(t_node **begin, t_node **current,
 						t_node **list);
@@ -180,6 +156,8 @@ int						ft_ast_lbrace(t_node **begin, t_node **current,
 						t_node **list);
 int						ft_ast_rbrace(t_node **begin, t_node **current,
 						t_node **list);
+t_node					*ft_toklist_to_node(char *input, t_toklist *list);
+t_node					*ft_build_ast(t_node *list);
 
 typedef struct			s_tokcond
 {
@@ -188,8 +166,74 @@ typedef struct			s_tokcond
 	int					sub_mode;
 }						t_tokcond;
 
+typedef struct			s_proclist
+{
+	pid_t				pid;
+	t_node				*command;
+	int					status;
+	char				*path;
+	char				**args;
+	struct s_proclist	*next;
+}						t_proclist;
+
+typedef struct			s_joblist
+{
+	pid_t				pgid;
+	t_proclist			*process;
+	t_node				*command;
+	int					num;
+	struct s_joblist	*next;
+}						t_joblist;
+
+typedef struct			s_tmpfd
+{
+	int					initial;
+	int					tmp;
+	int					cloexec;
+	struct s_tmpfd		*next;
+}						t_tmpfd;
+
+typedef struct			s_shell
+{
+	pid_t				pgid;
+	int					forked;
+	t_joblist			*jobs;
+	pid_t				pid;
+	int					retval;
+	int					foreground;
+	struct termios		term;
+	t_tmpfd				*tmp_fds;
+}						t_shell;
+
+/*
+**						exe
+*/
+
+int						ft_exe_badtoken(t_node *current, t_shell *shell);
+int						ft_exe_pipe(t_node *current, t_shell *shell);
+int						ft_exe_and(t_node *current, t_shell *shell);
+int						ft_exe_semi(t_node *current, t_shell *shell);
+int						ft_exe_great(t_node *current, t_shell *shell);
+int						ft_exe_less(t_node *current, t_shell *shell);
+int						ft_exe_rpar(t_node *current, t_shell *shell);
+int						ft_exe_and_if(t_node *current, t_shell *shell);
+int						ft_exe_or_if(t_node *current, t_shell *shell);
+int						ft_exe_dgreat(t_node *current, t_shell *shell);
+int						ft_exe_lessand(t_node *current, t_shell *shell);
+int						ft_exe_lessanddash(t_node *current, t_shell *shell);
+int						ft_exe_greatand(t_node *current, t_shell *shell);
+int						ft_exe_greatanddash(t_node *current, t_shell *shell);
+int						ft_exe_lessgreat(t_node *current, t_shell *shell);
+int						ft_exe_dless(t_node *current, t_shell *shell);
+int						ft_exe_rbrace(t_node *current, t_shell *shell);
+int						ft_exe_command(t_node *current, t_shell *shell);
+
+
 extern char				*g_tokstr[];
 extern t_toktab			g_toktab[];
 extern t_tokcond		g_tokcond[];
+extern int				(*g_asttab[])(t_node **begin, t_node **current,
+						t_node **list);
+extern int				(*g_exetab[])(t_node *current, t_shell *shell);
 
 #endif

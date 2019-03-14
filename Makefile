@@ -6,7 +6,7 @@
 #    By: geargenc <geargenc@student.42.fr>          +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2018/02/24 17:11:19 by geargenc          #+#    #+#              #
-#    Updated: 2019/02/03 12:57:50 by geargenc         ###   ########.fr        #
+#    Updated: 2019/03/01 15:54:50 by geargenc         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -18,7 +18,8 @@ CC				= 	gcc
 
 CFLAGS			=	-Wall -Wextra -Werror -I includes
 
-FILES			=	ft_lexer.c\
+FILES			=	ft_ast.c\
+					ft_lexer.c\
 					main.c
 
 SRC_DIR			=	src/

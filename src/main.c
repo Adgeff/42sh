@@ -6,7 +6,7 @@
 /*   By: geargenc <geargenc@student.42.fr>          +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2018/12/12 21:15:15 by geargenc          #+#    #+#             */
-/*   Updated: 2019/02/03 13:04:35 by geargenc         ###   ########.fr       */
+/*   Updated: 2019/03/14 17:35:31 by geargenc         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -15,566 +15,737 @@
 
 #define VOID (void)argc;(void)argv;(void)envp
 
-t_node			*ft_new_node(void)
+int				ft_exe_badtoken(t_node *current, t_shell *shell)
 {
-	t_node		*new;
-
-	if (!(new = (t_node *)malloc(sizeof(t_node))))
-		return (NULL);
-	ft_bzero(new, sizeof(t_node));
-	return (new);
+	(void)current;
+	(void)shell;
+	return (-1);
 }
 
-t_node			*ft_toklist_to_node(char *input, t_toklist *list)
+t_proclist		*ft_get_pipeline(t_node *current)
 {
-	t_node		*begin;
-	t_node		**next;
-	t_toklist	*tmp;
+	t_proclist	*process;
 
-	begin = NULL;
-	next = &begin;
-	while (list)
+	if (!(process = (t_proclist *)malloc(sizeof(t_proclist))))
+		return (NULL);
+	*process = (t_proclist){0, NULL, 0, NULL, NULL, NULL};
+	if (current->token == PIPE)
 	{
-		if (!(*next = ft_new_node())
-			|| !((*next)->data = ft_strsub(input, list->start, list->len)))
+		process->command = current->left;
+		if (!(process->next = ft_get_pipeline(current->right)))
 			return (NULL);
-		(*next)->token = list->token;
-		next = &((*next)->right);
-		tmp = list;
-		list = list->next;
+	}
+	else
+	{
+		process->command = current;
+		process->next = NULL;
+	}
+	return (process);
+}
+
+int				ft_get_job_number(t_joblist *jobs)
+{
+	int			max;
+
+	max = 0;
+	while (jobs)
+	{
+		if (jobs->num > max)
+			max = jobs->num;
+		jobs = jobs->next;
+	}
+	return (max + 1);
+}
+
+t_joblist		*ft_get_job(t_node *current, t_shell *shell)
+{
+	t_joblist	*job;
+
+	if (!(job = (t_joblist *)malloc(sizeof(t_joblist)))
+		|| !(job->process = ft_get_pipeline(current)))
+		return (NULL);
+	if (shell->pgid)
+		job->pgid = shell->pgid;
+	else
+		job->pgid = 0;
+	job->command = current;
+	job->next = NULL;
+	job->num = ft_get_job_number(shell->jobs);
+	return (job);
+}
+
+void			ft_reset_signals(void)
+{
+	signal (SIGINT, SIG_DFL);
+    signal (SIGQUIT, SIG_DFL);
+    signal (SIGTSTP, SIG_DFL);
+    signal (SIGTTIN, SIG_DFL);
+    signal (SIGTTOU, SIG_DFL);
+}
+
+void			ft_launch_process(t_proclist *proc, t_shell *shell,
+				int pipefd[3], pid_t pgid)
+{
+	setpgid(getpid(), (pgid = pgid ? pgid : getpid()));
+	if (!shell->pgid && shell->foreground)
+		tcsetpgrp(STDIN_FILENO, pgid);
+	if (!shell->pgid)
+		ft_reset_signals();
+	shell->pgid = pgid;
+	if (pipefd[2] != -1 && dup2(pipefd[2], 0) == -1)
+		exit(1);
+	close(pipefd[2]);
+	if (pipefd[1] != -1 && dup2(pipefd[1], 1) == -1)
+		exit(1);
+	close(pipefd[1]);
+	close(pipefd[0]);
+	shell->forked = 1;
+	if (proc->path)
+	{
+		if (proc->command->redir && g_exetab[proc->command->redir->token]
+			(proc->command->redir, shell))
+			exit(1);
+		execve(proc->path, proc->args, NULL);
+		exit(1);
+	}
+	exit(g_exetab[proc->command->token](proc->command, shell));
+}
+
+void			ft_launch_job(t_joblist *job, t_shell *shell)
+{
+	t_proclist	*proc;
+	int			pipefd[3];
+
+	proc = job->process;
+	pipefd[2] = -1;
+	while (proc)
+	{
+		if (proc->next && pipe(pipefd) == -1)
+			exit(2);
+		if (!proc->next)
+			pipefd[1] = -1;
+		if ((proc->pid = fork()) < 0)
+			exit(2);
+		if (!proc->pid)
+			ft_launch_process(proc, shell, pipefd, job->pgid);
+		if (job->pgid == 0)
+			job->pgid = proc->pid;
+		setpgid(proc->pid, job->pgid);
+		close(pipefd[1]);
+		close(pipefd[2]);
+		pipefd[2] = pipefd[0];
+		proc = proc->next;
+	}
+}
+
+void			ft_write_status(int status)
+{
+	ft_putstr("WIFEXITED: ");
+	ft_putnbr(WIFEXITED(status));
+	ft_putstr(" - WEXITSTATUS: ");
+	ft_putnbr(WEXITSTATUS(status));
+	ft_putstr("\nWIFSIGNALED: ");
+	ft_putnbr(WIFSIGNALED(status));
+	ft_putstr(" - WTERMSIG: ");
+	ft_putnbr(WTERMSIG(status));
+	ft_putstr("\nWIFSTOPPED: ");
+	ft_putnbr(WIFSTOPPED(status));
+	ft_putstr(" - WSTOPSIG: ");
+	ft_putnbr(WSTOPSIG(status));
+	ft_putstr("\nWCOREDUMP: ");
+	ft_putnbr(WCOREDUMP(status));
+	ft_putstr("\nisatty: ");
+	ft_putnbr(isatty(1));
+	ft_putstr("\n");
+}
+
+int				ft_wait_job(t_joblist *job)
+{
+	t_proclist	*proc;
+
+	proc = job->process;
+	while (proc && proc->next)
+	{
+		waitpid(proc->pid, &(proc->status), WUNTRACED);
+		proc = proc->next;
+	}
+	waitpid(proc->pid, &(proc->status), WUNTRACED);
+	ft_write_status(proc->status);
+	return (proc->status);
+}
+
+int				ft_exe_pipe(t_node *current, t_shell *shell)
+{
+	t_joblist	*job;
+	int			status;
+
+	shell->forked = 0;
+	if (!(job = ft_get_job(current, shell)))
+		exit(2);
+	ft_launch_job(job, shell);
+	if (!shell->pgid && shell->foreground)
+		tcsetpgrp(STDIN_FILENO, job->pgid);
+	status = ft_wait_job(job);
+	if (!shell->pgid && shell->foreground)
+		tcsetpgrp(STDIN_FILENO, shell->pid);
+	return (WEXITSTATUS(status));
+}
+
+int				ft_exe_and(t_node *current, t_shell *shell)
+{
+	t_joblist	*job;
+	int			foreground;
+
+	shell->forked = 0;
+	if (!(job = ft_get_job(current->left, shell)))
+		exit(2);
+	foreground = shell->foreground;
+	shell->foreground = 0;
+	ft_launch_job(job, shell);
+	shell->foreground = foreground;
+	shell->retval = 0;
+	if (current->right)
+		shell->retval = g_exetab[current->right->token](current->right, shell);
+	return (shell->retval);
+}
+
+int				ft_exe_semi(t_node *current, t_shell *shell)
+{
+	int			ret;
+
+	if (current->right)
+		shell->forked = 0;
+	if ((ret = g_exetab[current->left->token](current->left, shell)) < 0)
+		return (ret);
+	if (current->right)
+		ret = g_exetab[current->right->token](current->right, shell);
+	return (ret);
+}
+
+int				ft_dup_tmp_fd(int fd)
+{
+	int			cpy;
+	int			denied[3];
+
+	denied[0] = 0;
+	denied[1] = 0;
+	denied[2] = 0;
+	while ((cpy = dup(fd)) >= 0 && cpy <= 2)
+		denied[cpy] = 1;
+	if (denied[0])
+		close(0);
+	if (denied[1])
+		close(1);
+	if (denied[2])
+		close(2);
+	return (cpy);
+}
+
+void			ft_build_tmp_fd(int fd, t_tmpfd **begin)
+{
+	t_tmpfd		*tmp;
+	int			cloexec;
+
+	if ((cloexec = fcntl(fd, F_GETFD)) != -1)
+	{
+		if (!(tmp = (t_tmpfd *)malloc(sizeof(t_tmpfd))))
+			exit(2);
+		tmp->initial = fd;
+		if ((tmp->tmp = ft_dup_tmp_fd(fd)) == -1)
+			exit(2);
+		tmp->cloexec = cloexec;
+		fcntl(tmp->tmp, F_SETFD, FD_CLOEXEC);
+		tmp->next = *begin;
+		*begin = tmp;
+	}
+}
+
+void			ft_reset_tmp_fd(t_tmpfd *begin)
+{
+	t_tmpfd		*tmp;
+
+	while (begin)
+	{
+		if (dup2(begin->tmp, begin->initial) == -1)
+			exit(2);
+		close(begin->tmp);
+		fcntl(begin->initial, F_SETFD, begin->cloexec);
+		tmp = begin;
+		begin = begin->next;
 		free(tmp);
 	}
-	return (begin);
 }
 
-void			ft_ast_push_one_back_left(t_node **from, t_node *to)
+int				ft_exe_great(t_node *current, t_shell *shell)
 {
-	while (to->left)
-		to = to->left;
-	(*from)->parent = to;
-	to->left = *from;
-	*from = (*from)->right;
-	to->left->right = NULL;
-}
+	int			dest;
+	int			src;
 
-void			ft_ast_push_one_back_right(t_node **from, t_node *to)
-{
-	while (to->right)
-		to = to->right;
-	(*from)->parent = to;
-	to->right = *from;
-	*from = (*from)->right;
-	to->right->right = NULL;
-}
-
-void			ft_ast_push_one_back_redir(t_node **from, t_node *to)
-{
-	while (to->redir)
-		to = to->redir;
-	(*from)->parent = to;
-	to->redir = *from;
-	*from = (*from)->right;
-	to->redir->right = NULL;
-}
-
-int				ft_badtoken(t_node **begin, t_node **current, t_node **list)
-{
-	(void)begin;
-	(void)current;
-	(void)list;
+	dest = current->left ? ft_atoi(current->left->data) : 1;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	if ((src = open(current->right->data, O_WRONLY)) == -1)
+	{
+		if ((src = open(current->right->data, O_WRONLY | O_CREAT)) == -1)
+			return (1);
+		fchmod(src, 0644);
+	}
+	if (dest != src)
+	{
+		if (dup2(src, dest) == -1)
+			exit(2);
+		close(src);
+	}
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
 	return (0);
 }
 
-void			ft_ast_insert_parent(t_node **begin, t_node **current,
-				t_node **list)
+int				ft_exe_less(t_node *current, t_shell *shell)
 {
-	(*list)->parent = (*current)->parent;
-	(*list)->left = *current;
-	if (!((*list)->parent))
-		*begin = *list;
-	else if ((*current)->parent->right == *current)
-		(*current)->parent->right = *list;
-	else
-		(*current)->parent->left = *list;
-	(*current)->parent = *list;
-	*current = *list;
-	*list = (*list)->right;
-	(*current)->right = NULL;
-}
+	int			dest;
+	int			src;
 
-int				ft_ast_command(t_node **begin, t_node **current)
-{
-	t_node		*command;
-
-	if (!(*current) || (*current)->token != COMMAND)
-	{
-		if (!(command = ft_new_node()))
-			return (-1);
-		command->token = COMMAND;
-		if (!(*begin))
-		{
-			*begin = command;
-			*current = command;
-		}
-		else
-		{
-			(*current)->right = command;
-			command->parent = *current;
-			*current = command;
-		}
-	}
-	return (1);
-}
-
-int				ft_ast_isassignment(t_node *current, t_node *list)
-{
-	char		*equal;
-	char		*word;
-
-	if (!(current->right) && (equal = ft_strchr(list->data, '=')))
-	{
-		if (*(list->data) >= '0' && *(list->data) <= '9')
-			return (0);
-		word = list->data;
-		while (word < equal)
-		{
-			if (*word != '_' && !ft_isalnum(*word))
-				return (0);
-			word++;
-		}
+	dest = current->left ? ft_atoi(current->left->data) : 0;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	if ((src = open(current->right->data, O_RDONLY)) == -1)
 		return (1);
+	if (dest != src)
+	{
+		if (dup2(src, dest) == -1)
+			exit(2);
+		close(src);
 	}
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
 	return (0);
 }
 
-int				ft_ast_word(t_node **begin, t_node **current, t_node **list)
+int				ft_exe_rpar(t_node *current, t_shell *shell)
 {
-	if (*current && ((*current)->token == RPAR || (*current)->token == RBRACE))
-		return (0);
-	if (ft_ast_command(begin, current) == -1)
-		return (-1);
-	if (ft_ast_isassignment(*current, *list))
-		ft_ast_push_one_back_left(list, *current);
-	else
-		ft_ast_push_one_back_right(list, *current);
-	return (1);
+	t_joblist	*job;
+	int			status;
+
+	if (!shell->forked)
+	{
+		if (!(job = ft_get_job(current, shell)))
+			exit(2);
+		ft_launch_job(job, shell);
+		if (!shell->pgid && shell->foreground)
+			tcsetpgrp(STDIN_FILENO, job->pgid);
+		status = ft_wait_job(job);
+		if (!shell->pgid && shell->foreground)
+			tcsetpgrp(STDIN_FILENO, shell->pid);
+		return (WEXITSTATUS(status));
+	}
+	if (current->redir
+		&& g_exetab[current->redir->token](current->redir, shell))
+		exit(1);
+	exit(g_exetab[current->right->token](current->right, shell));
 }
 
-int				ft_ast_iscommand(t_node *current)
+int				ft_exe_and_if(t_node *current, t_shell *shell)
 {
-	return (current && (current->token == COMMAND || current->token == RPAR
-		|| current->token == RBRACE));
-}
-
-int				ft_ast_isseparator(t_node *current)
-{
-	return (current && (current->token == SEMI || current->token == AND));
-}
-
-int				ft_ast_continue_list(t_node **list)
-{
-	t_toklist	*new;
-	char		*input;
 	int			ret;
 
-	if ((ret = get_next_line(0, &input)) != 1)
+	shell->forked = 0;
+	if ((ret = g_exetab[current->left->token](current->left, shell)))
 		return (ret);
-	if (!(new = ft_lexer(&input)))
-		return (-1);
-	if (!(*list = ft_toklist_to_node(input, new)))
-		return (-1);
-	free(input);
-	return (1);
+	return (g_exetab[current->right->token](current->right, shell));
 }
 
-int				ft_ast_isbreakline(t_node *current)
+int				ft_exe_or_if(t_node *current, t_shell *shell)
 {
-	return (current && (current->token == PIPE
-		|| current->token == AND_IF
-		|| current->token == OR_IF));
-}
-
-void			ft_ast_freeone(t_node **list)
-{
-	t_node		*tmp;
-
-	tmp = *list;
-	*list = (*list)->right;
-	if (tmp->data)
-		free(tmp->data);
-	free(tmp);
-}
-
-int				ft_ast_newline(t_node **begin, t_node **current, t_node **list)
-{
-	if (ft_ast_iscommand(*current))
-	{
-		(*list)->token = SEMI;
-		(*list)->data[0] = ';';
-		return (ft_ast_separator(begin, current, list));
-	}
-	ft_ast_freeone(list);
-	return (1);
-}
-
-int				ft_ast_io_number(t_node **begin, t_node **current,
-				t_node **list)
-{
-	t_node		*io_number;
-
-	(void)begin;
-	(void)current;
-	io_number = *list;
-	*list = (*list)->right;
-	io_number->right = NULL;
-	(*list)->left = io_number;
-	return (1);
-}
-
-int				ft_ast_pipe(t_node **begin, t_node **current, t_node **list)
-{
-	if (!ft_ast_iscommand(*current))
-		return (0);
-	while ((*current)->parent && (*current)->parent->token == PIPE)
-		*current = (*current)->parent;
-	ft_ast_insert_parent(begin, current, list);
-	return (1);
-}
-
-int				ft_ast_separator(t_node **begin, t_node **current,
-				t_node **list)
-{
-	if (!ft_ast_iscommand(*current))
-		return (0);
-	while ((*current)->parent && ((*current)->parent->token == PIPE
-		|| (*current)->parent->token == AND_IF
-		|| (*current)->parent->token == OR_IF))
-		*current = (*current)->parent;
-	ft_ast_insert_parent(begin, current, list);
-	return (1);
-}
-
-int				ft_ast_redir(t_node **begin, t_node **current, t_node **list)
-{
-	t_node		*tmp;
-
-	if (!ft_ast_iscommand(*current)
-		&& ft_ast_command(begin, current) == -1)
-		return (-1);
-	tmp = *list;
-	ft_ast_push_one_back_redir(list, *current);
-	if (!(*list) || (*list)->token != WORD)
-		return (0);
-	ft_ast_push_one_back_right(list, tmp);
-	return (1);
-}
-
-int				ft_ast_lpar(t_node **begin, t_node **current, t_node **list)
-{
-	if (*current && (*current)->token == COMMAND)
-		return (0);
-	if (*current)
-	{
-		ft_ast_push_one_back_right(list, *current);
-		*current = (*current)->right;
-	}
-	else
-	{
-		*begin = *list;
-		*current = *list;
-		*list = (*list)->right;
-		(*current)->right = NULL;
-	}
-	return (1);
-}
-
-int				ft_ast_rpar(t_node **begin, t_node **current, t_node **list)
-{
-	t_node		*tmp;
-
-	(void)begin;
-	if (!ft_ast_iscommand(*current) && !ft_ast_isseparator(*current))
-		return (0);
-	while (*current && (*current)->token != LPAR && (*current)->token != LBRACE)
-		*current = (*current)->parent;
-	if (*current && (*current)->token == LPAR)
-		(*current)->token = RPAR;
-	else
-		return (0);
-	tmp = *list;
-	*list = (*list)->right;
-	free(tmp->data);
-	free(tmp);
-	return (1);
-}
-
-int				ft_ast_and_or(t_node **begin, t_node **current, t_node **list)
-{
-	if (!ft_ast_iscommand(*current))
-		return (0);
-	while ((*current)->parent && ((*current)->parent->token == PIPE
-		|| (*current)->parent->token == AND_IF
-		|| (*current)->parent->token == OR_IF))
-		*current = (*current)->parent;
-	ft_ast_insert_parent(begin, current, list);
-	return (1);
-}
-
-int				ft_ast_readheredoc(t_node *heredoc)
-{
-	char		*input;
 	int			ret;
 
-	input = NULL;
-	while (!input)
-	{
-		ret = get_next_line(0, &input) == 1;
-		if (ret == -1)
-			return (-1);
-		if (ret == 0)
-		{
-			ft_putstr_fd("42sh: Warning : here-document delimited by "
-				"end-of-file\n", 2);
-			return (1);
-		}
-		if (strncmp(input, heredoc->right->data, ft_strlen(input) - 1))
-		{
-			if (!(heredoc->right->right->data =
-				ft_strjoinfree(heredoc->right->right->data, input, 3)))
-				return (-1);
-			input = NULL;
-		}
-	}
-	free(input);
-	return (1);
-}
-
-int				ft_ast_heredoc(t_node **begin, t_node **current, t_node **list)
-{
-	t_node		*tmp;
-	int			ret;
-
-	tmp = *list;
-	if ((ret = ft_ast_redir(begin, current, list)) != 1)
+	shell->forked = 0;
+	if ((ret = g_exetab[current->left->token](current->left, shell)) < 1)
 		return (ret);
-	if (!(tmp->right->right = ft_new_node())
-		|| !(tmp->right->right->data = ft_strdup("")))
-		return (-1);
-	return (ft_ast_readheredoc(tmp));
+	return (g_exetab[current->right->token](current->right, shell));
 }
 
-int				ft_ast_closefd(t_node **begin, t_node **current, t_node **list)
+int				ft_exe_dgreat(t_node *current, t_shell *shell)
 {
-	if (!ft_ast_iscommand(*current)
-		&& ft_ast_command(begin, current) == -1)
-		return (-1);
-	ft_ast_push_one_back_redir(list, *current);
-	return (1);
-}
+	int			dest;
+	int			src;
 
-int				ft_ast_lbrace(t_node **begin, t_node **current, t_node **list)
-{
-	if (*current && (*current)->token == COMMAND)
-		return (0);
-	if (*current)
+	dest = current->left ? ft_atoi(current->left->data) : 1;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	if ((src = open(current->right->data, O_WRONLY | O_APPEND)) == -1)
 	{
-		ft_ast_push_one_back_right(list, *current);
-		*current = (*current)->right;
-	}
-	else
-	{
-		*begin = *list;
-		*current = *list;
-		*list = (*list)->right;
-		(*current)->right = NULL;
-	}
-	return (1);
-}
-
-int				ft_ast_rbrace(t_node **begin, t_node **current, t_node **list)
-{
-	t_node		*tmp;
-
-	(void)begin;
-	if (!ft_ast_iscommand(*current) && !ft_ast_isseparator(*current))
-		return (0);
-	while (*current && (*current)->token != LPAR && (*current)->token != LBRACE)
-		*current = (*current)->parent;
-	if (*current && (*current)->token == LBRACE)
-		(*current)->token = RBRACE;
-	else
-		return (0);
-	tmp = *list;
-	*list = (*list)->right;
-	free(tmp->data);
-	free(tmp);
-	return (1);
-}
-
-void			ft_error_unexpected(t_node *list)
-{
-	ft_putstr_fd("42sh", 2);
-	if (list)
-	{
-		ft_putstr_fd(": syntax error near unexpected token `", 2);
-		if (list->token == NEWLINE)
-			ft_putstr_fd("newline", 2);
-		else
-			ft_putstr_fd(list->data, 2);
-		ft_putstr_fd("'\n", 2);
-	}
-	else
-		ft_putstr_fd(": syntax error: unexpected end of file\n", 2);
-}
-
-void			ft_ast_free(t_node *ast)
-{
-	if (ast)
-	{
-		if (ast->left)
-			ft_ast_free(ast->left);
-		if (ast->right)
-			ft_ast_free(ast->right);
-		if (ast->redir)
-			ft_ast_free(ast->redir);
-		if (ast->data)
-			free(ast->data);
-		free(ast);
-	}
-}
-
-int				ft_ast_isincompound(t_node *current)
-{
-	while (current)
-	{
-		if (current->token == LPAR || current->token == LBRACE)
+		if ((src = open(current->right->data,
+			O_WRONLY | O_APPEND | O_CREAT)) == -1)
 			return (1);
-		current = current->parent;
+		fchmod(src, 0644);
 	}
+	if (dest != src)
+	{
+		if (dup2(src, dest) == -1)
+			exit(2);
+		close(src);
+	}
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
 	return (0);
 }
 
-t_node			*ft_build_ast(t_node *list)
+int				ft_str_isdigit(char *str)
 {
-	t_node		*begin;
-	t_node		*current;
-	int			ret;
-
-	begin = NULL;
-	current = NULL;
-	while (list)
-	{
-		ret = g_asttab[list->token](&begin, &current, &list);
-		if (ret == 1 && !list && (ft_ast_isbreakline(current)
-			|| ft_ast_isincompound(current)))
-			ret = ft_ast_continue_list(&list);
-		if (ret != 1)
-		{
-			if (ret == 0)
-				ft_error_unexpected(list);
-			ft_ast_free(begin);
-			ft_ast_free(list);
-			return (NULL);
-		}
-	}
-	return (begin);
-}
-
-void			ft_line_spaces(int rec)
-{
-	while (rec > 0)
-	{
-		write(1, "    |", 5);
-		rec--;
-	}
-}
-
-#include <stdarg.h>
-
-void			ft_printer(char *format, ...)
-{
-	va_list		ap;
-	char		*res;
 	int			i;
 
-	va_start(ap, format);
-	vasprintf(&res, format, ap);
-	va_end(ap);
 	i = 0;
-	while (res[i])
+	while (str[i])
 	{
-		if (res[i] == '\n')
-			write(1, "\\n", 2);
-		else
-			write(1, res + i, 1);
+		if (str[i] < '0' || str[i] > '9')
+			return (0);
 		i++;
 	}
-	write(1, "\n", 1);
-	free(res);
+	return (1);
 }
 
-void			ft_print_ast(t_node *ast, int rec)
+int				ft_exe_lessand(t_node *current, t_shell *shell)
 {
-	ft_line_spaces(rec);
-	ft_printer("    +token [%s]", g_tokstr[ast->token]);
-	ft_line_spaces(rec);
-	ft_printer("    +data [%s]", ast->data);
-	if (ast->left)
+	int			dest;
+	int			src;
+
+	dest = current->left ? ft_atoi(current->left->data) : 0;
+	if (!ft_str_isdigit(current->right->data))
+		return (1);
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	src = ft_atoi(current->right->data);
+	if (dest != src && dup2(src, dest) == -1)
+		exit(2);
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_lessanddash(t_node *current, t_shell *shell)
+{
+	int			dest;
+
+	dest = current->left ? ft_atoi(current->left->data) : 0;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	close(dest);
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_greatand(t_node *current, t_shell *shell)
+{
+	int			dest;
+	int			src;
+
+	if (!(ft_str_isdigit(current->right->data)))
+		return (ft_exe_and(current, shell));
+	dest = current->left ? ft_atoi(current->left->data) : 1;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	src = ft_atoi(current->right->data);
+	if (dest != src && dup2(src, dest) == -1)
+		exit(2);
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_greatanddash(t_node *current, t_shell *shell)
+{
+	int			dest;
+
+	dest = current->left ? ft_atoi(current->left->data) : 1;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	close(dest);
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_lessgreat(t_node *current, t_shell *shell)
+{
+	int			dest;
+	int			src;
+
+	dest = current->left ? ft_atoi(current->left->data) : 0;
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	if ((src = open(current->right->data, O_RDWR)) == -1)
 	{
-		ft_line_spaces(rec);
-		ft_printer("    +left :");
-		ft_print_ast(ast->left, rec + 1);
+		if ((src = open(current->right->data, O_RDWR | O_CREAT)) == -1)
+			return (1);
+		fchmod(src, 0644);
 	}
-	if (ast->right)
+	if (dest != src)
 	{
-		ft_line_spaces(rec);
-		ft_printer("    +right :");
-		ft_print_ast(ast->right, rec + 1);
+		if (dup2(src, dest) == -1)
+			exit(2);
+		close(src);
 	}
-	if (ast->redir)
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_dless(t_node *current, t_shell *shell)
+{
+	int			dest;
+	int			pipefd[2];
+
+	dest = current->left ? ft_atoi(current->left->data) : 0;
+	if (pipe(pipefd) == -1)
+		exit(2);
+	if (!shell->forked)
+		ft_build_tmp_fd(dest, &(shell->tmp_fds));
+	write(pipefd[1], current->right->right->data,
+		ft_strlen(current->right->right->data));
+	close(pipefd[1]);
+	if (dest != pipefd[0])
 	{
-		ft_line_spaces(rec);
-		ft_printer("    +redirs :");
-		ft_print_ast(ast->redir, rec + 1);
+		if (dup2(pipefd[0], dest) == -1)
+			exit(2);
+		close(pipefd[0]);
 	}
+	if (current->redir)
+		return (g_exetab[current->redir->token](current->redir, shell));
+	return (0);
+}
+
+int				ft_exe_rbrace(t_node *current, t_shell *shell)
+{
+	t_tmpfd		*tmp;
+	int			ret;
+
+	shell->forked = 0;
+	ret = 0;
+	if (current->redir)
+		ret = g_exetab[current->redir->token](current->redir, shell);
+	tmp = shell->tmp_fds;
+	shell->tmp_fds = NULL;
+	if (!ret)
+		ret = g_exetab[current->right->token](current->right, shell);
+	ft_reset_tmp_fd(tmp);
+	return (shell->retval = ret);
+}
+
+// char			*ft_expanse_replace(char *arg, int start, int len, char *by)
+// {
+// 	char		*result;
+// 	int			count;
+
+// 	count = start + ft_strlen(by) + ft_strlen(arg + start + len);
+// 	if (!(result = (char *)malloc((count + 1) * sizeof(char))))
+// 		return (NULL);
+// 	ft_strncpy(result, arg, (size_t)start);
+// 	ft_strcpy(result + start, by);
+// 	ft_strcat(result + start, arg + start + len);
+// 	free(arg);
+// 	return (result);
+// }
+
+// int				ft_expanse_tilde(char **arg, int start, t_shell *shell)
+// {
+// 	int			i;
+// 	char		*dir;
+// 	struct passwd	*passwd;
+
+// 	i = start + 1;
+// 	if ((*arg)[i] >= '0' && (*arg)[i] <= '9')
+// 		return (1);
+// 	while ((*arg)[i] != '\0' && (*arg)[i] != '/' && (*arg)[i] != ':')
+// 	{
+// 		if (ft_isalnum((*arg)[i]) == 0 && (*arg)[i] != '_')
+// 			return (1);
+// 		i++;
+// 	}
+// 	if ((i - start) == 1)
+// 	{
+// 		dir = //RECUPERER VARIABLE HOME
+// 		if (!dir && (!(passwd = getpwuid(getuid()))
+// 			|| !(dir = ft_strdup(passwd->pw_dir))))
+// 			return (-1);
+// 	}
+// 	else
+// 	{
+// 		if (!(dir = ft_strsub(*arg, start + 1, i - start - 1))
+// 			|| !(passwd = getpwnam(dir)))
+// 			return (-1);
+// 		free(dir);
+// 		if (!(passwd = ft_strdup(passwd->pw_dir)))
+// 			return (-1);
+// 	}
+// 	if (!(arg = ft_expanse_replace(*arg, start, i, dir)))
+// 		return (-1);
+// 	i = ft_strlen(dir);
+// 	free(dir);
+// 	return (i);
+// }
+
+// int				ft_expanse_dollar_par(char **arg, int start, t_shell *shell)
+// {
+// 	int			pars;
+// 	int			i;
+// 	int			quote;
+
+// 	pars = 1;
+// 	i = start + 2;
+// 	quote = '\0';
+// 	while (pars)
+// 	{
+// 		if ((*arg)[i] == '\\')
+// 			000
+
+			
+// 	}
+// }
+
+// int				ft_expanse_dollar(char **arg, int start, t_shell *shell,
+// 				char quote)
+// {
+// 	if ((*arg)[start + 1] == '(')
+// 		return (i = ft_expanse_dollar_par(arg, start, shell));
+// 	else if ((*arg)[start + 1] == '{')
+// 		return (i = ft_expanse_dollar_brace(arg, start, shell, quote));
+// 	else
+// 		return (ft_expanse_dollar_simple(arg, start, shell, quote));
+// }
+
+// int				ft_expanse_arg(char **arg, t_shell *shell)
+// {
+// 	char		quote;
+// 	int			i;
+// 	int			j;
+
+// 	quote = '\0';
+// 	i = 0;
+// 	while ((*arg)[i])
+// 	{
+// 		j = 0;
+// 		if ((*arg)[i] == quote)
+// 			quote = '\0';
+// 		else if (((*arg)[i] == '\'' || (*arg)[i] == '\"') && quote == '\0')
+// 			quote = (*arg)[i];
+// 		else if ((*arg)[i] == '\\')
+// 			j = 2;
+// 		else if ((*arg)[i] == '~' && i == 0)
+// 			j = ft_expanse_tilde(arg, i, shell);
+// 		else if ((*arg)[i] == '$' && quote != '\'')
+// 			j = ft_expanse_dollar(arg, i, shell, quote);
+// 		else if ((*arg)[i] == '`' && quote != '\'')
+// 			j = ft_expanse_bquote(arg, i, shell);
+// 		else
+// 			j = 1;
+// 		if (j < 0)
+// 			return (-1);
+// 		i = i + j;
+// 	}
+// 	return (0);
+// }
+
+char			**ft_expanse_command(t_node *current, t_shell *shell)
+{
+	char		**args;
+	t_node		*words;
+	int			i;
+
+	(void)shell;
+	i = 0;
+	words = current->right;
+	while (words)
+	{
+		words = words->right;
+		i++;
+	}
+	if (!(args = (char **)malloc((i + 1) * sizeof(char *))))
+		return (NULL);
+	i = 0;
+	words = current->right;
+	while (words)
+	{
+		if (!(args[i] = ft_strdup(words->data)))
+			return (NULL);
+		words = words->right;
+		i++;
+	}
+	args[i] = NULL;
+	return (args);
+}
+
+int				ft_exe_command(t_node *current, t_shell *shell)
+{
+	t_joblist	*job;
+	char		**args;
+	int			status;
+
+	if (!(args = ft_expanse_command(current, shell)))
+		exit(2);
+	if (!shell->forked)
+	{
+		if (!(job = ft_get_job(current, shell)))
+			exit(2);
+		job->process->path = args[0];
+		job->process->args = args;
+		ft_launch_job(job, shell);
+		if (!shell->pgid && shell->foreground)
+			tcsetpgrp(STDIN_FILENO, job->pgid);
+		status = ft_wait_job(job);
+		if (!shell->pgid && shell->foreground)
+			tcsetpgrp(STDIN_FILENO, shell->pid);
+		return ((shell->retval = WEXITSTATUS(job->process->status)));
+	}
+	execve(args[0], args, NULL);
+	return ((shell->retval = 1));
+}
+
+void			ft_init(t_shell *shell)
+{
+	shell->pid = getpid();
+	shell->pgid = getpgrp();
+	shell->foreground = 0;
+	if (isatty(STDIN_FILENO))
+	{
+		while (tcgetpgrp(STDIN_FILENO) != shell->pgid)
+			kill(-shell->pgid, SIGTTIN);
+		shell->pgid = 0;
+		//signal (SIGINT, SIG_IGN);
+  		signal(SIGQUIT, SIG_IGN);
+   		signal(SIGTSTP, SIG_IGN);
+   		signal(SIGTTIN, SIG_IGN);
+   		signal(SIGTTOU, SIG_IGN);
+		signal(SIGCHLD, SIG_DFL);
+		setpgid(shell->pid, shell->pid);
+		tcsetpgrp(STDIN_FILENO, shell->pid);
+		tcgetattr(STDIN_FILENO, &(shell->term));
+		shell->foreground = 1;
+	}
+	shell->forked = 0;
+	shell->jobs = NULL;
+	shell->retval = 0;
+	shell->tmp_fds = NULL;
 }
 
 int				main(int argc, char **argv, char **envp)
 {
-	// t_main	main;
-	// pid_t	pid;
 	char		*input;
 	void		*list;
+	t_shell		shell;
 
 	VOID;
+	ft_init(&shell);
 	if (get_next_line(0, &input) == -1)
 		return (1);
 	if (!(list = ft_lexer(&input)))
 		return (1);
-	ft_print_toklist(input, list);
 	if (!(list = ft_toklist_to_node(input, list)))
 		return (1);
 	free(input);
 	if (!(list = ft_build_ast(list)))
 		return (1);
-	ft_print_ast(list, 0);
-	// if (!(main.ttyname = ttyname(0)))
-	// 	return (0);
-	// pid = fork();
-	// if (pid == -1)
-	// 	printf("fork KO\n");
-	// else if (pid)
-	// {
-	// 	printf("%d %d\n", getpid(), getpgid(getpid()));
-	// 	waitpid(pid, NULL, WUNTRACED);
-	// 	sleep(1);
-	// 	kill(pid, SIGCONT);
-	// 	waitpid(pid, NULL, WUNTRACED);
-	// }
-	// else
-	// {
-	// 	setpgid(getpid(), 0);
-	// 	execve("/bin/cat", argv, envp);
-	// }
+	g_exetab[((t_node *)list)->token](list, &shell);
 	return (0);
 }
